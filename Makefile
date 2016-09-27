@@ -1,5 +1,6 @@
-CXX		= clang++
-CXXFLAGS	= -std=c++11 -O2 -ggdb -Wall
+# CXX		= clang++
+CXX		= g++-4.8
+CXXFLAGS	= -std=c++11 -O0 -g -Wall
 
 
 all: solution
