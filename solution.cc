@@ -27,6 +27,8 @@
 #include <utility>
 #include <vector>
 
+#include "include/utf8/utf8.h"
+
 using namespace std;
 
 // }}}
@@ -37,6 +39,7 @@ const string kOutputFilename = "output.txt";
 ifstream fin(kInputFilename);
 ofstream fout(kOutputFilename);
 
+using KeyType = uint16_t;
 
 #define DEFINE_ACCESSOR_AND_MUTATOR(type, name) \
   type name() {                                 \
@@ -49,7 +52,7 @@ ofstream fout(kOutputFilename);
 
 class State {
  public:
-  using TransType = unordered_map<char, State *>;
+  using TransType = unordered_map<KeyType, State *>;
 
   DEFINE_ACCESSOR_AND_MUTATOR(int, maxlen)
   DEFINE_ACCESSOR_AND_MUTATOR(int, minlen)
@@ -61,13 +64,13 @@ class State {
   DEFINE_ACCESSOR_AND_MUTATOR(int, appearance)
   DEFINE_ACCESSOR_AND_MUTATOR(bool, split)
 
-  bool has_trans(char c) const {
+  bool has_trans(KeyType c) const {
     return trans_.count(c) > 0;
   }
-  State *trans(char c) const {
+  State *trans(KeyType c) const {
     return trans_.at(c);
   }
-  void set_trans(char c, State *v) {
+  void set_trans(KeyType c, State *v) {
     trans_[c] = v;
   }
 
@@ -84,13 +87,13 @@ class State {
 
   State *link_ = nullptr;
   vector<State *> reversed_links_;
-  unordered_map<char, State *> trans_;
+  unordered_map<KeyType, State *> trans_;
 
   bool accept_ = false;
 };
 
 
-State *AddSymbolToSAM(State *start, State *last, char c) {
+State *AddSymbolToSAM(State *start, State *last, KeyType c) {
   auto cur = new State;
   cur->set_maxlen(last->maxlen() + 1);
   cur->set_first_endpos(last->first_endpos() + 1);
@@ -166,11 +169,20 @@ int SetAppearance(State *u) {
 }
 
 
-State *CreateSAM(const string &T) {
+vector<KeyType> Decode(const string &text) {
+  vector<KeyType> utf16text;
+  utf8::utf8to16(text.begin(), text.end(), back_inserter(utf16text));
+  return utf16text;
+}
+
+
+State *CreateSAM(const string &RT) {
+  auto T = Decode(RT);
+
   auto start = new State;
   auto last = start;
 
-  for (char c : T) {
+  for (KeyType c : T) {
     last = AddSymbolToSAM(start, last, c);
   }
   
@@ -189,7 +201,7 @@ State *CreateSAM(const string &T) {
 
 double QueryPossibility(const string &word, State *start, int total) {
   auto state = start;
-  for (char c : word) {
+  for (KeyType c : Decode(word)) {
     if (!state->has_trans(c)) {
       return -1.0;
     }
@@ -205,5 +217,5 @@ int main() {
 
   auto start = CreateSAM(T);
 
-  cout << QueryPossibility("aa", start, T.size()) << endl;
+  cout << QueryPossibility("\xe4\xb8\xad\xe6\x96\x87", start, T.size()) << endl;
 }
