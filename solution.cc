@@ -33,7 +33,7 @@ using namespace std;
 
 // }}}
 
-using CharType = unsigned short;
+using CharType = uint16_t;
 using WordType = vector<CharType>;
 
 #define DEFINE_ACCESSOR_AND_MUTATOR(type, name) \
@@ -115,7 +115,7 @@ State *AddSymbolToSAM(State *start, State *last, CharType c) {
     sq->set_maxlen(p->maxlen() + 1);
     sq->set_trans(q->trans());
     sq->set_first_endpos(q->first_endpos());
-    
+
     while (p && p->has_trans(c) && p->trans(c) == q) {
       p->set_trans(c, sq);
       p = p->link();
@@ -178,7 +178,7 @@ State *CreateSAM(const WordType &T) {
   for (CharType c : T) {
     last = AddSymbolToSAM(start, last, c);
   }
-  
+
   while (last != start) {
     last->set_accept(true);
     last = last->link();
@@ -306,7 +306,6 @@ vector<WordType> FilterCandidates(vector<WordType> &candidates,
                                   const int kAppearance,
                                   State *start, State *rstart,
                                   const int total) {
-
   set<pair<int, WordType>> appearance_word;
   for (auto &word : candidates) {
     if (word.size() <= 1) {
@@ -317,7 +316,7 @@ vector<WordType> FilterCandidates(vector<WordType> &candidates,
     if (appearance < kAppearance) {
       continue;
     }
-    
+
     double cohesion = CohesionValue(word, start, total);
     if (cohesion < kCohesion) {
       continue;
@@ -369,14 +368,6 @@ int main(int argc, char **argv) {
   WordType word;
   vector<WordType> candidates;
   CollectWordCandidates(start, kDepth, word, candidates);
-
-  /*
-  for (auto &utf16word : candidates) {
-    string utf8word;
-    utf8::utf16to8(utf16word.begin(), utf16word.end(), back_inserter(utf8word));
-    cout << utf8word << endl;
-  }
-  */
 
   auto extracted_words = FilterCandidates(
       candidates, kCohesion, kEntropy, kAppearance, start, rstart, word_size);
