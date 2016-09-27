@@ -45,31 +45,35 @@ using WordType = vector<CharType>;
   }                                             \
 
 
+class State;
+using StatePtr = shared_ptr<State>;
+
+
 class State {
  public:
-  using TransType = unordered_map<CharType, State *>;
+  using TransType = unordered_map<CharType, StatePtr>;
 
   DEFINE_ACCESSOR_AND_MUTATOR(int, maxlen)
   DEFINE_ACCESSOR_AND_MUTATOR(int, minlen)
   DEFINE_ACCESSOR_AND_MUTATOR(int, first_endpos)
-  DEFINE_ACCESSOR_AND_MUTATOR(State *, link)
+  DEFINE_ACCESSOR_AND_MUTATOR(StatePtr, link)
   DEFINE_ACCESSOR_AND_MUTATOR(bool, accept)
   DEFINE_ACCESSOR_AND_MUTATOR(TransType, trans)
-  DEFINE_ACCESSOR_AND_MUTATOR(vector<State *>, reversed_links)
+  DEFINE_ACCESSOR_AND_MUTATOR(vector<StatePtr>, reversed_links)
   DEFINE_ACCESSOR_AND_MUTATOR(int, appearance)
   DEFINE_ACCESSOR_AND_MUTATOR(bool, split)
 
   bool has_trans(CharType c) const {
     return trans_.count(c) > 0;
   }
-  State *trans(CharType c) const {
+  StatePtr trans(CharType c) const {
     return trans_.at(c);
   }
-  void set_trans(CharType c, State *v) {
+  void set_trans(CharType c, StatePtr v) {
     trans_[c] = v;
   }
 
-  void add_reversed_link(State *v) {
+  void add_reversed_link(StatePtr v) {
     reversed_links_.push_back(v);
   }
 
@@ -80,16 +84,30 @@ class State {
   int appearance_ = 1;
   bool split_ = false;
 
-  State *link_ = nullptr;
-  vector<State *> reversed_links_;
-  unordered_map<CharType, State *> trans_;
+  StatePtr link_ = nullptr;
+  vector<StatePtr> reversed_links_;
+  unordered_map<CharType, StatePtr> trans_;
 
   bool accept_ = false;
 };
 
 
-State *AddSymbolToSAM(State *start, State *last, CharType c) {
-  auto cur = new State;
+struct StateManager {
+
+  static StatePtr CreateState() {
+    auto ptr = make_shared<State>();
+    all_states_.push_back(ptr);
+    return ptr;
+  }
+
+  static vector<StatePtr> all_states_;
+};
+
+vector<StatePtr> StateManager::all_states_ = {};
+
+
+StatePtr AddSymbolToSAM(StatePtr start, StatePtr last, CharType c) {
+  auto cur = StateManager::CreateState();
   cur->set_maxlen(last->maxlen() + 1);
   cur->set_first_endpos(last->first_endpos() + 1);
 
@@ -110,7 +128,7 @@ State *AddSymbolToSAM(State *start, State *last, CharType c) {
     cur->set_link(q);
     cur->set_minlen(q->maxlen() + 1);
   } else {
-    auto sq = new State;
+    auto sq = StateManager::CreateState();
     sq->set_split(true);
     sq->set_maxlen(p->maxlen() + 1);
     sq->set_trans(q->trans());
@@ -135,24 +153,17 @@ State *AddSymbolToSAM(State *start, State *last, CharType c) {
 }
 
 
-void SetReversedLink(State *u, unordered_set<State *> &searched) {
-  if (searched.count(u) > 0) {
-    return;
-  }
-  searched.insert(u);
-
-  auto v = u->link();
-  if (v) {
-    v->add_reversed_link(u);
-  }
-
-  for (auto &tran : u->trans()) {
-    SetReversedLink(tran.second, searched);
+void SetReversedLink() {
+  for (auto u : StateManager::all_states_) {
+    auto v = u->link();
+    if (v) {
+      v->add_reversed_link(u);
+    }
   }
 }
 
 
-int SetAppearance(State *u) {
+int SetAppearance(StatePtr u) {
   u->set_appearance(u->split() ? 0 : 1);
 
   int count = u->appearance();
@@ -171,8 +182,8 @@ WordType Decode(const string &text) {
 }
 
 
-State *CreateSAM(const WordType &T) {
-  auto start = new State;
+StatePtr CreateSAM(const WordType &T) {
+  auto start = StateManager::CreateState();
   auto last = start;
 
   for (CharType c : T) {
@@ -184,8 +195,7 @@ State *CreateSAM(const WordType &T) {
     last = last->link();
   }
 
-  unordered_set<State *> searched;
-  SetReversedLink(start, searched);
+  SetReversedLink();
   SetAppearance(start);
 
   return start;
@@ -194,7 +204,7 @@ State *CreateSAM(const WordType &T) {
 
 double QueryPossibility(WordType::const_iterator iter_begin,
                         WordType::const_iterator iter_end,
-                        State *start, int total) {
+                        StatePtr start, int total) {
   auto state = start;
   for (auto iter = iter_begin; iter != iter_end; ++iter) {
     CharType c = *iter;
@@ -208,13 +218,13 @@ double QueryPossibility(WordType::const_iterator iter_begin,
   return size * static_cast<double>(state->appearance()) / total;
 }
 
-double QueryPossibility(const string &word, State *start, int total) {
+double QueryPossibility(const string &word, StatePtr start, int total) {
   auto utf16word = Decode(word);
   return QueryPossibility(utf16word.begin(), utf16word.end(), start, total);
 }
 
 
-void CollectWordCandidates(State *state, const int depth,
+void CollectWordCandidates(StatePtr state, const int depth,
                            WordType &word,
                            vector<WordType> &candidates) {
   if (depth < 0) {
@@ -231,7 +241,7 @@ void CollectWordCandidates(State *state, const int depth,
 
 
 // word.size() > 1
-double CohesionValue(const WordType &word, State *start, int total) {
+double CohesionValue(const WordType &word, StatePtr start, int total) {
   double div = -1.0;
   for (auto iter_mid = word.begin() + 1;
        iter_mid != word.end(); ++iter_mid) {
@@ -254,7 +264,7 @@ double EntropyFormula(const vector<double> &possibilities) {
 }
 
 
-vector<CharType> FindAdjacentChars(const WordType &word, State *start) {
+vector<CharType> FindAdjacentChars(const WordType &word, StatePtr start) {
   auto state = start;
   for (CharType c : word) {
     state = state->trans(c);
@@ -267,7 +277,7 @@ vector<CharType> FindAdjacentChars(const WordType &word, State *start) {
 }
 
 
-double EntropyValue(const WordType &word, State *start, const int total) {
+double EntropyValue(const WordType &word, StatePtr start, const int total) {
   auto adjacent_chars = FindAdjacentChars(word, start);
   vector<double> possibilities;
   for (auto iter = adjacent_chars.begin();
@@ -280,7 +290,7 @@ double EntropyValue(const WordType &word, State *start, const int total) {
 
 
 double LeftRightEntropyValue(WordType &word,
-                             State *start, State *rstart,
+                             StatePtr start, StatePtr rstart,
                              const int total) {
   double right = EntropyValue(word, start, total);
   reverse(word.begin(), word.end());
@@ -291,7 +301,7 @@ double LeftRightEntropyValue(WordType &word,
 }
 
 
-int WordAppearance(const WordType &word, State *start) {
+int WordAppearance(const WordType &word, StatePtr start) {
   auto state = start;
   for (CharType c : word) {
     state = state->trans(c);
@@ -304,7 +314,7 @@ vector<WordType> FilterCandidates(vector<WordType> &candidates,
                                   const double kCohesion,
                                   const double kEntropy,
                                   const int kAppearance,
-                                  State *start, State *rstart,
+                                  StatePtr start, StatePtr rstart,
                                   const int total) {
   set<pair<int, WordType>> appearance_word;
   for (auto &word : candidates) {

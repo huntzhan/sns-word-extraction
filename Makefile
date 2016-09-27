@@ -1,5 +1,5 @@
-# CXX		= clang++
-CXX		= g++-4.8
+CXX		= clang++
+# CXX		= g++-4.8
 # CXXFLAGS	= -std=c++11 -O0 -g -Wall
 CXXFLAGS	= -std=c++11 -O2 -Wall
 
