@@ -433,11 +433,10 @@ int main(int argc, char **argv) {
 
   ofstream fout(kOutputFileName);
   for (auto &word : extracted_words) {
-    auto text = word.ToStr();
-    if (stopwords.count(text) > 0) {
+    if (stopwords.count(word.text_) > 0) {
       continue;
     } else {
-      fout << text << endl;
+      fout << word.ToStr() << endl;
     }
   }
 
