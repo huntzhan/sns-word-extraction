@@ -382,30 +382,43 @@ set<WordInfo> FilterCandidates(vector<WordType> &candidates,
 }
 
 
-// INPUT: utf-8 encoded file.
+// INPUT-MATERIAL: utf-8 encoded file.
+// INPUT-STOPWORDS: utf-8 encoded file.
 // OUTPUT: utf-8 encoded file.
 // DEPTH: the maximum word-length of candidates.
 // COHESION: the lower bound of CohesionValue.
 // ENTROPY: the lower bound of LeftRightEntropyValue.
 // APPEARANCE: the lower bound of appearance.
 int main(int argc, char **argv) {
-  if (argc != 7) {
+  if (argc != 8) {
     return 1;
   }
 
-  const string kInputFileName(argv[1]);
-  const string kOutputFileName(argv[2]);
+  const string kInputMaterialFileName(argv[1]);
+  const string kInputStopwordsFileName(argv[2]);
 
-  const int kDepth(stoi(argv[3]));
-  const double kCohesion(stod(argv[4]));
-  const double kEntropy(stod(argv[5]));
-  const int kAppearance(stoi(argv[6]));
+  const string kOutputFileName(argv[3]);
 
-  ifstream fin(kInputFileName);
+  const int kDepth(stoi(argv[4]));
+  const double kCohesion(stod(argv[5]));
+  const double kEntropy(stod(argv[6]));
+  const int kAppearance(stoi(argv[7]));
+
+  ifstream fin(kInputMaterialFileName);
   string utf8content;
   fin >> utf8content;
   auto T = Decode(utf8content);
   int word_size = T.size();
+
+  unordered_set<string> stopwords;
+  if (!kInputStopwordsFileName.empty()) {
+    ifstream fin(kInputStopwordsFileName);
+    string word;
+    while (fin) {
+      fin >> word;
+      stopwords.insert(word);
+    }
+  }
 
   auto start = CreateSAM(T);
   reverse(T.begin(), T.end());
@@ -420,7 +433,12 @@ int main(int argc, char **argv) {
 
   ofstream fout(kOutputFileName);
   for (auto &word : extracted_words) {
-    fout << word.ToStr() << endl;
+    auto text = word.ToStr();
+    if (stopwords.count(text) > 0) {
+      continue;
+    } else {
+      fout << text << endl;
+    }
   }
 
   return 0;
