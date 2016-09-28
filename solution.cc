@@ -310,13 +310,50 @@ int WordAppearance(const WordType &word, StatePtr start) {
 }
 
 
-vector<WordType> FilterCandidates(vector<WordType> &candidates,
+struct WordInfo {
+
+  WordInfo(const WordType &utf16word,
+           int appearance,
+           double cohesion,
+           double entropy)
+      : appearance_(appearance), cohesion_(cohesion), entropy_(entropy) {
+    // encoding.
+    utf8::utf16to8(utf16word.begin(), utf16word.end(), back_inserter(text_));
+  }
+
+  bool operator<(const WordInfo &other) const {
+    return appearance_ > other.appearance_;
+  }
+
+  string ToStr() const {
+    string ret = text_;
+    ret.push_back(' ');
+
+    ret.append(to_string(appearance_));
+    ret.push_back(' ');
+
+    ret.append(to_string(cohesion_));
+    ret.push_back(' ');
+
+    ret.append(to_string(entropy_));
+
+    return ret;
+  }
+  
+  int appearance_ = -1;
+  double cohesion_ = -1.0;
+  double entropy_ = -1.0;
+  string text_ = "";
+};
+
+
+set<WordInfo> FilterCandidates(vector<WordType> &candidates,
                                   const double kCohesion,
                                   const double kEntropy,
                                   const int kAppearance,
                                   StatePtr start, StatePtr rstart,
                                   const int total) {
-  set<pair<int, WordType>> appearance_word;
+  set<WordInfo> ret_words;
   for (auto &word : candidates) {
     if (word.size() <= 1) {
       continue;
@@ -336,34 +373,32 @@ vector<WordType> FilterCandidates(vector<WordType> &candidates,
     if (entropy < kEntropy) {
       continue;
     }
-    // good word.
-    appearance_word.insert({appearance, word});
-  }
 
-  vector<WordType> ret;
-  for (auto pair : appearance_word) {
-    ret.push_back(pair.second);
+    // good word.
+    ret_words.insert(WordInfo(word, appearance, cohesion, entropy));
   }
-  reverse(ret.begin(), ret.end());
-  return ret;
+  return ret_words;
 }
 
 
 // INPUT: utf-8 encoded file.
+// OUTPUT: utf-8 encoded file.
 // DEPTH: the maximum word-length of candidates.
 // COHESION: the lower bound of CohesionValue.
 // ENTROPY: the lower bound of LeftRightEntropyValue.
 // APPEARANCE: the lower bound of appearance.
 int main(int argc, char **argv) {
-  if (argc != 6) {
+  if (argc != 7) {
     return 1;
   }
 
   const string kInputFileName(argv[1]);
-  const int kDepth(stoi(argv[2]));
-  const double kCohesion(stod(argv[3]));
-  const double kEntropy(stod(argv[4]));
-  const int kAppearance(stoi(argv[5]));
+  const string kOutputFileName(argv[2]);
+
+  const int kDepth(stoi(argv[3]));
+  const double kCohesion(stod(argv[4]));
+  const double kEntropy(stod(argv[5]));
+  const int kAppearance(stoi(argv[6]));
 
   ifstream fin(kInputFileName);
   string utf8content;
@@ -381,10 +416,11 @@ int main(int argc, char **argv) {
 
   auto extracted_words = FilterCandidates(
       candidates, kCohesion, kEntropy, kAppearance, start, rstart, word_size);
-  for (int i = 0; i < min(30, static_cast<int>(extracted_words.size())); ++i) {
-    auto &utf16word = extracted_words[i];
-    string utf8word;
-    utf8::utf16to8(utf16word.begin(), utf16word.end(), back_inserter(utf8word));
-    cout << utf8word << endl;
+
+  ofstream fout(kOutputFileName);
+  for (auto &word : extracted_words) {
+    fout << word.ToStr() << endl;
   }
+
+  return 0;
 }
