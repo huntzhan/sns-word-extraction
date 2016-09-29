@@ -17,7 +17,6 @@
 #include <iostream>
 #include <list>
 #include <map>
-#include <memory>
 #include <numeric>
 #include <queue>
 #include <set>
@@ -34,9 +33,6 @@ using namespace std;
 
 // }}}
 
-using CharType = uint16_t;
-using WordType = vector<CharType>;
-
 #define DEFINE_ACCESSOR_AND_MUTATOR(type, name) \
   type name() {                                 \
     return name ## _;                           \
@@ -47,20 +43,26 @@ using WordType = vector<CharType>;
 
 
 class State;
-using StatePtr = shared_ptr<State>;
+
+using CharType = uint16_t;
+using WordType = vector<CharType>;
+
+using StatePtr = State *;
+using TransType = unordered_map<CharType, StatePtr>;
 
 
 class State {
  public:
-  using TransType = unordered_map<CharType, StatePtr>;
+
+  DEFINE_ACCESSOR_AND_MUTATOR(bool, empty)
 
   DEFINE_ACCESSOR_AND_MUTATOR(int, maxlen)
   DEFINE_ACCESSOR_AND_MUTATOR(int, minlen)
-  DEFINE_ACCESSOR_AND_MUTATOR(int, first_endpos)
+  // DEFINE_ACCESSOR_AND_MUTATOR(int, first_endpos)
   DEFINE_ACCESSOR_AND_MUTATOR(StatePtr, link)
-  DEFINE_ACCESSOR_AND_MUTATOR(bool, accept)
+  // DEFINE_ACCESSOR_AND_MUTATOR(bool, accept)
   DEFINE_ACCESSOR_AND_MUTATOR(TransType, trans)
-  DEFINE_ACCESSOR_AND_MUTATOR(vector<StatePtr>, reversed_links)
+  // DEFINE_ACCESSOR_AND_MUTATOR(vector<StatePtr>, reversed_links)
   DEFINE_ACCESSOR_AND_MUTATOR(int, appearance)
   DEFINE_ACCESSOR_AND_MUTATOR(bool, split)
 
@@ -73,44 +75,76 @@ class State {
   void set_trans(CharType c, StatePtr v) {
     trans_[c] = v;
   }
-
-  void add_reversed_link(StatePtr v) {
-    reversed_links_.push_back(v);
+  void free_trans() {
+    trans_.clear();
   }
 
  private:
+  bool empty_ = true;
+
   int maxlen_ = 0;
   int minlen_ = 0;
-  int first_endpos_ = -1;
+  // int first_endpos_ = -1;
   int appearance_ = 1;
   bool split_ = false;
 
   StatePtr link_ = nullptr;
-  vector<StatePtr> reversed_links_;
+  // vector<StatePtr> reversed_links_;
   unordered_map<CharType, StatePtr> trans_;
 
-  bool accept_ = false;
+  // bool accept_ = false;
 };
 
 
 struct StateManager {
 
   static StatePtr CreateState() {
-    auto ptr = make_shared<State>();
-    all_states_.push_back(ptr);
-    return ptr;
+    while (free_index_ < upper_bound_ && !state_space_[free_index_].empty()) {
+      ++free_index_;
+    }
+    if (free_index_ == upper_bound_) {
+      // all consumed.
+      throw runtime_error("Too Much State.");
+    }
+    state_space_[free_index_].set_empty(false);
+    return &state_space_[free_index_];
   }
 
-  static vector<StatePtr> all_states_;
+  static void AllocateMemory(const int size) {
+    free_index_ = 0;
+    upper_bound_ = size;
+    state_space_ = state_allocator_.allocate(size);
+    for (int i = 0; i < size; ++i) {
+      new(&state_space_[i]) State;
+    }
+  }
+
+  static void DeallocateMemory() {
+    state_allocator_.deallocate(state_space_, upper_bound_);
+  }
+
+  static void ResetFreeIndex() {
+    free_index_ = 0;
+  }
+
+  static StatePtr state_space_;
+  static int free_index_;
+  static int upper_bound_;
+
+  static allocator<State> state_allocator_;
 };
 
-vector<StatePtr> StateManager::all_states_ = {};
+
+StatePtr StateManager::state_space_ = nullptr;
+int StateManager::free_index_ = 0;
+int StateManager::upper_bound_ = 0;
+allocator<State> StateManager::state_allocator_{};
 
 
 StatePtr AddSymbolToSAM(StatePtr start, StatePtr last, CharType c) {
   auto cur = StateManager::CreateState();
   cur->set_maxlen(last->maxlen() + 1);
-  cur->set_first_endpos(last->first_endpos() + 1);
+  // cur->set_first_endpos(last->first_endpos() + 1);
 
   auto p = last;
   while (p && !p->has_trans(c)) {
@@ -133,7 +167,7 @@ StatePtr AddSymbolToSAM(StatePtr start, StatePtr last, CharType c) {
     sq->set_split(true);
     sq->set_maxlen(p->maxlen() + 1);
     sq->set_trans(q->trans());
-    sq->set_first_endpos(q->first_endpos());
+    // sq->set_first_endpos(q->first_endpos());
 
     while (p && p->has_trans(c) && p->trans(c) == q) {
       p->set_trans(c, sq);
@@ -154,36 +188,118 @@ StatePtr AddSymbolToSAM(StatePtr start, StatePtr last, CharType c) {
 }
 
 
-void SetReversedLink() {
-  for (auto u : StateManager::all_states_) {
+struct StateHash {
+    size_t operator()(const StatePtr val) const {
+        static const size_t shift =
+            static_cast<size_t>(log2(1 + sizeof(State)));
+        return reinterpret_cast<size_t>(val) >> shift;
+    }
+};
+
+
+void SetReversedLink(
+      StatePtr start,
+      unordered_map<StatePtr, vector<StatePtr>, StateHash> &reversed_links,
+      unordered_set<StatePtr, StateHash> &searched) {
+
+  queue<StatePtr> q;
+  q.push(start);
+
+  while (!q.empty()) {
+    auto u = q.front();
+    q.pop();
+
+    if (u && searched.count(u) > 0) {
+      continue;
+    }
+    searched.insert(u);
+
     auto v = u->link();
     if (v) {
-      v->add_reversed_link(u);
+      reversed_links[v].push_back(u);
+    }
+
+    for (auto &tran : u->trans()) {
+      q.push(tran.second);
     }
   }
 }
 
 
-int SetAppearance(StatePtr u) {
-  u->set_appearance(u->split() ? 0 : 1);
+int SetAppearance(
+      StatePtr u,
+      unordered_map<StatePtr, vector<StatePtr>, StateHash> &reversed_links) {
+  int count = u->split() ? 0 : 1;
 
-  int count = u->appearance();
-  for (auto child : u->reversed_links()) {
-    count += SetAppearance(child);
+  if (reversed_links.count(u) > 0) {
+    for (auto child : reversed_links[u]) {
+      count += SetAppearance(child, reversed_links);
+    }
   }
   u->set_appearance(count);
   return count;
 }
 
 
-WordType Decode(const string &text) {
-  WordType utf16text;
-  utf8::utf8to16(text.begin(), text.end(), back_inserter(utf16text));
-  return utf16text;
+void FreeState(StatePtr node, unordered_set<StatePtr> &skip_nodes) {
+  queue<StatePtr> q;
+  q.push(node);
+
+  while (!q.empty()) {
+    auto u = q.front();
+    q.pop();
+    if (skip_nodes.count(u) > 0) {
+      continue;
+    }
+    for (auto &tran : u->trans()) {
+      q.push(tran.second);
+    }
+    u->free_trans();
+    u->set_link(nullptr);
+    u->set_empty(true);
+  }
 }
 
 
-StatePtr CreateSAM(const WordType &T) {
+void FreeUnnecessaryStates(StatePtr start, const int kDepth) {
+  queue<StatePtr> q;
+  unordered_set<StatePtr> skip_nodes;
+
+  q.push(start);
+  int level = 0;
+  int level_size = 1;
+
+  while (level <= kDepth && !q.empty()) {
+    level_size = q.size();
+
+    for (int i = 0; i < level_size; ++i) {
+      auto node = q.front();
+      q.pop();
+      skip_nodes.insert(node);
+      for (auto &tran : node->trans()) {
+        q.push(tran.second);
+      }
+    }
+    
+    ++level;
+  }
+
+  while (!q.empty()) {
+    auto free_root = q.front();
+    q.pop();
+    // it's possibile!
+    if (skip_nodes.count(free_root) > 0) {
+      continue;
+    }
+    for (auto &tran : free_root->trans()) {
+      FreeState(tran.second, skip_nodes);
+    }
+    free_root->free_trans();
+  }
+}
+
+
+StatePtr CreateSAM(const WordType &T, const int kDepth) {
   auto start = StateManager::CreateState();
   auto last = start;
 
@@ -192,14 +308,26 @@ StatePtr CreateSAM(const WordType &T) {
   }
 
   while (last != start) {
-    last->set_accept(true);
+    // last->set_accept(true);
     last = last->link();
   }
 
-  SetReversedLink();
-  SetAppearance(start);
+  unordered_map<StatePtr, vector<StatePtr>, StateHash> reversed_links;
+  unordered_set<StatePtr, StateHash> searched;
 
+  SetReversedLink(start, reversed_links, searched);
+  SetAppearance(start, reversed_links);
+
+  FreeUnnecessaryStates(start, kDepth);
+  StateManager::ResetFreeIndex();
   return start;
+}
+
+
+WordType Decode(const string &text) {
+  WordType utf16text;
+  utf8::utf8to16(text.begin(), text.end(), back_inserter(utf16text));
+  return utf16text;
 }
 
 
@@ -410,6 +538,8 @@ int main(int argc, char **argv) {
   auto T = Decode(utf8content);
   int word_size = T.size();
 
+  StateManager::AllocateMemory(3 * word_size);
+
   unordered_set<string> stopwords;
   if (!kInputStopwordsFileName.empty()) {
     ifstream fin(kInputStopwordsFileName);
@@ -420,9 +550,9 @@ int main(int argc, char **argv) {
     }
   }
 
-  auto start = CreateSAM(T);
+  auto start = CreateSAM(T, kDepth);
   reverse(T.begin(), T.end());
-  auto rstart = CreateSAM(T);
+  auto rstart = CreateSAM(T, kDepth);
 
   WordType word;
   vector<WordType> candidates;
@@ -440,5 +570,6 @@ int main(int argc, char **argv) {
     }
   }
 
+  StateManager::DeallocateMemory();
   return 0;
 }
