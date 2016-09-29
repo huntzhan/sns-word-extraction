@@ -58,11 +58,8 @@ class State {
 
   DEFINE_ACCESSOR_AND_MUTATOR(int, maxlen)
   DEFINE_ACCESSOR_AND_MUTATOR(int, minlen)
-  // DEFINE_ACCESSOR_AND_MUTATOR(int, first_endpos)
   DEFINE_ACCESSOR_AND_MUTATOR(StatePtr, link)
-  // DEFINE_ACCESSOR_AND_MUTATOR(bool, accept)
   DEFINE_ACCESSOR_AND_MUTATOR(TransType, trans)
-  // DEFINE_ACCESSOR_AND_MUTATOR(vector<StatePtr>, reversed_links)
   DEFINE_ACCESSOR_AND_MUTATOR(int, appearance)
   DEFINE_ACCESSOR_AND_MUTATOR(bool, split)
 
@@ -84,25 +81,22 @@ class State {
 
   int maxlen_ = 0;
   int minlen_ = 0;
-  // int first_endpos_ = -1;
   int appearance_ = 1;
   bool split_ = false;
 
   StatePtr link_ = nullptr;
-  // vector<StatePtr> reversed_links_;
   unordered_map<CharType, StatePtr> trans_;
-
-  // bool accept_ = false;
 };
 
 
 struct StateManager {
 
   static StatePtr CreateState() {
-    while (free_index_ < upper_bound_ && !state_space_[free_index_].empty()) {
-      ++free_index_;
+    while (0 <= free_index_ && free_index_ < upper_bound_
+           && !state_space_[free_index_].empty()) {
+      free_index_ += free_index_inc_;
     }
-    if (free_index_ == upper_bound_) {
+    if (free_index_ < 0 || free_index_ >= upper_bound_) {
       // all consumed.
       throw runtime_error("Too Much State.");
     }
@@ -112,8 +106,11 @@ struct StateManager {
 
   static void AllocateMemory(const int size) {
     free_index_ = 0;
+    free_index_inc_ = 1;
+
     upper_bound_ = size;
     state_space_ = state_allocator_.allocate(size);
+
     for (int i = 0; i < size; ++i) {
       new(&state_space_[i]) State;
     }
@@ -124,27 +121,35 @@ struct StateManager {
   }
 
   static void ResetFreeIndex() {
-    free_index_ = 0;
+    if (free_index_inc_ > 0) {
+      free_index_ = upper_bound_ - 1;
+      free_index_inc_ = -1;
+    } else {
+      free_index_ = 0;
+      free_index_inc_ = 1;
+    }
   }
 
-  static StatePtr state_space_;
   static int free_index_;
+  static int free_index_inc_;
   static int upper_bound_;
 
+  static StatePtr state_space_;
   static allocator<State> state_allocator_;
 };
 
 
-StatePtr StateManager::state_space_ = nullptr;
 int StateManager::free_index_ = 0;
+int StateManager::free_index_inc_ = 1;
 int StateManager::upper_bound_ = 0;
+
+StatePtr StateManager::state_space_ = nullptr;
 allocator<State> StateManager::state_allocator_{};
 
 
 StatePtr AddSymbolToSAM(StatePtr start, StatePtr last, CharType c) {
   auto cur = StateManager::CreateState();
   cur->set_maxlen(last->maxlen() + 1);
-  // cur->set_first_endpos(last->first_endpos() + 1);
 
   auto p = last;
   while (p && !p->has_trans(c)) {
@@ -167,7 +172,6 @@ StatePtr AddSymbolToSAM(StatePtr start, StatePtr last, CharType c) {
     sq->set_split(true);
     sq->set_maxlen(p->maxlen() + 1);
     sq->set_trans(q->trans());
-    // sq->set_first_endpos(q->first_endpos());
 
     while (p && p->has_trans(c) && p->trans(c) == q) {
       p->set_trans(c, sq);
@@ -308,7 +312,6 @@ StatePtr CreateSAM(const WordType &T, const int kDepth) {
   }
 
   while (last != start) {
-    // last->set_accept(true);
     last = last->link();
   }
 
@@ -350,22 +353,6 @@ double QueryPossibility(WordType::const_iterator iter_begin,
 double QueryPossibility(const string &word, StatePtr start, int total) {
   auto utf16word = Decode(word);
   return QueryPossibility(utf16word.begin(), utf16word.end(), start, total);
-}
-
-
-void CollectWordCandidates(StatePtr state, const int depth,
-                           WordType &word,
-                           vector<WordType> &candidates) {
-  if (depth < 0) {
-    return;
-  }
-  candidates.push_back(word);
-
-  for (auto &tran : state->trans()) {
-    word.push_back(tran.first);
-    CollectWordCandidates(tran.second, depth - 1, word, candidates);
-    word.pop_back();
-  }
 }
 
 
@@ -476,14 +463,40 @@ struct WordInfo {
 };
 
 
-set<WordInfo> FilterCandidates(vector<WordType> &candidates,
-                                  const double kCohesion,
-                                  const double kEntropy,
-                                  const int kAppearance,
-                                  StatePtr start, StatePtr rstart,
-                                  const int total) {
+void CollectWordCandidates(StatePtr state,
+                           const int depth, const int kDepth,
+                           const int kAppearance,
+                           WordType &word, queue<WordType> &candidates) {
+  if (depth > kDepth) {
+    return;
+  }
+  if (depth > 1 && state->appearance() >= kAppearance) {
+    candidates.push(word);
+  }
+
+  for (auto &tran : state->trans()) {
+    word.push_back(tran.first);
+    CollectWordCandidates(
+        tran.second,
+        depth + 1, kDepth,
+        kAppearance,
+        word, candidates);
+    word.pop_back();
+  }
+}
+
+
+set<WordInfo> FilterCandidates(queue<WordType> &candidates,
+                               const double kCohesion,
+                               const double kEntropy,
+                               const int kAppearance,
+                               StatePtr start, StatePtr rstart,
+                               const int total) {
   set<WordInfo> ret_words;
-  for (auto &word : candidates) {
+  while (!candidates.empty()) {
+    auto word = candidates.front();
+    candidates.pop();
+
     if (word.size() <= 1) {
       continue;
     }
@@ -555,8 +568,8 @@ int main(int argc, char **argv) {
   auto rstart = CreateSAM(T, kDepth);
 
   WordType word;
-  vector<WordType> candidates;
-  CollectWordCandidates(start, kDepth, word, candidates);
+  queue<WordType> candidates;
+  CollectWordCandidates(start, 0, kDepth, kAppearance, word, candidates);
 
   auto extracted_words = FilterCandidates(
       candidates, kCohesion, kEntropy, kAppearance, start, rstart, word_size);
